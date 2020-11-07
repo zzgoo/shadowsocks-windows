@@ -1,24 +1,25 @@
+using Shadowsocks.Protocol.Shadowsocks.Crypto;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Text;
 
 namespace Shadowsocks.Protocol.Shadowsocks
 {
-    class AeadSalt : IProtocolMessage
+    public class SaltMessage : IProtocolMessage
     {
         private readonly int length;
         public Memory<byte> Salt { get; private set; }
 
-        public AeadSalt(int length)
+        public SaltMessage(int length, bool roll = false)
         {
             this.length = length;
+            if (roll)
+            {
+                Salt = new byte[length];
+                CryptoUtils.RandomSpan(Salt.Span);
+            }
         }
 
-        public bool Equals([AllowNull] IProtocolMessage other)
-        {
-            throw new NotImplementedException();
-        }
+        public bool Equals([AllowNull] IProtocolMessage other) => throw new NotImplementedException();
 
         public int Serialize(Memory<byte> buffer)
         {

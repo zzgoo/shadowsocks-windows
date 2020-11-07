@@ -1,10 +1,107 @@
-﻿using System;
-using System.Collections.Generic;
+using Shadowsocks.Protocol.Shadowsocks.Crypto;
+using System;
+using System.IO.Pipelines;
+using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
+using System.Collections.Generic;
 
 namespace Shadowsocks.Protocol.Shadowsocks
 {
-    class AeadClient
+    public class AeadClient : IStreamClient
     {
+        CryptoParameter parameter;
+        string password;
+
+        static readonly byte[] _ssSubKeyInfo = Encoding.ASCII.GetBytes("ss-subkey");
+
+
+        public AeadClient(CryptoParameter parameter, string password)
+        {
+            this.password = password;
+            this.parameter = parameter;
+            if (!parameter.IsAead) throw new NotSupportedException("non AEAD method is not supported");
+        }
+
+        public Task Connect(EndPoint destination, IDuplexPipe client, IDuplexPipe server) =>
+            // destination is ignored, this is just a converter
+            Task.WhenAll(ConvertUplink(client, server), ConvertDownlink(client, server));
+
+        public async Task ConvertUplink(IDuplexPipe client, IDuplexPipe server)
+        {
+            var up = parameter.GetCrypto();
+            var pmp = new ProtocolMessagePipe(server);
+            var salt = new SaltMessage(16, true);
+            await pmp.WriteAsync(salt);
+
+            var oldKey = CryptoUtils.SSKDF(password, parameter.KeySize);
+            var key = CryptoUtils.HKDF(parameter.KeySize, oldKey, salt.Salt.ToArray(), _ssSubKeyInfo);
+            up.Init(key, null);
+            Memory<byte> nonce = new byte[parameter.NonceSize];
+            nonce.Span.Fill(0);
+            // TODO write salt with data
+            while (true)
+            {
+                var result = await client.Input.ReadAsync();
+                if (result.IsCanceled || result.IsCompleted) return;
+
+                // TODO compress into one chunk when possible
+
+                foreach (var item in result.Buffer)
+                {
+                    foreach (var i in SplitBigChunk(item))
+                    {
+                        await pmp.WriteAsync(new AeadBlockMessage(up, nonce, parameter)
+                        {
+                            // in send routine, Data is readonly
+                            Data = MemoryMarshal.AsMemory(i),
+                        });
+                    }
+                }
+                client.Input.AdvanceTo(result.Buffer.End);
+            }
+        }
+
+        public async Task ConvertDownlink(IDuplexPipe client, IDuplexPipe server)
+        {
+            var down = parameter.GetCrypto();
+
+            var pmp = new ProtocolMessagePipe(server);
+            var salt = await pmp.ReadAsync(new SaltMessage(parameter.KeySize));
+
+            var oldKey = CryptoUtils.SSKDF(password, parameter.KeySize);
+            var key = CryptoUtils.HKDF(parameter.KeySize, oldKey, salt.Salt.ToArray(), _ssSubKeyInfo);
+            down.Init(key, null);
+            Memory<byte> nonce = new byte[parameter.NonceSize];
+            nonce.Span.Fill(0);
+
+            while (true)
+            {
+                try
+                {
+                    var block = await pmp.ReadAsync(new AeadBlockMessage(down, nonce, parameter));
+                    await client.Output.WriteAsync(block.Data);
+                    client.Output.Advance(block.Data.Length);
+                }
+                catch (FormatException)
+                {
+                    return;
+                }
+            }
+        }
+
+        public List<ReadOnlyMemory<byte>> SplitBigChunk(ReadOnlyMemory<byte> mem)
+        {
+            var l = new List<ReadOnlyMemory<byte>>(mem.Length / 0x3fff + 1);
+            while (mem.Length > 0x3fff)
+            {
+
+                l.Add(mem.Slice(0, 0x3fff));
+                mem = mem.Slice(0x4000);
+            }
+            l.Add(mem);
+            return l;
+        }
     }
 }

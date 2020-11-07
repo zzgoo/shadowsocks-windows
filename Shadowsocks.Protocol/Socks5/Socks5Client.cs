@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net;
 using System.Text;
@@ -21,7 +22,7 @@ namespace Shadowsocks.Protocol.Socks5
 
             await pmp.WriteAsync(new Socks5VersionIdentifierMessage
             {
-                Auth = _credential == null ? new byte[] { Socks5Message.AuthNone } : new byte[] { Socks5Message.AuthNone, Socks5Message.AuthUserPass }
+                Auth = _credential == null ? new [] { Socks5Message.AuthNone } : new [] { Socks5Message.AuthNone, Socks5Message.AuthUserPass }
             });
 
             var msm = await pmp.ReadAsync<Socks5MethodSelectionMessage>();
@@ -30,6 +31,7 @@ namespace Shadowsocks.Protocol.Socks5
                 case Socks5Message.AuthNone:
                     break;
                 case Socks5Message.AuthUserPass:
+                    Debug.Assert(_credential != null);
                     var name = _credential.UserName;
                     var password = _credential.Password;
 

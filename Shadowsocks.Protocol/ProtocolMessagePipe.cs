@@ -12,7 +12,6 @@ namespace Shadowsocks.Protocol
         private readonly PipeReader _reader;
         private readonly PipeWriter _writer;
 
-
         public ProtocolMessagePipe(IDuplexPipe pipe)
         {
             _reader = pipe.Input;
@@ -27,10 +26,20 @@ namespace Shadowsocks.Protocol
             return await ReadAsync<T>(delay.Token);
         }
 
-        public async Task<T> ReadAsync<T>(CancellationToken token = default) where T : IProtocolMessage, new()
+        public async Task<T> ReadAsync<T>(T ret, int millisecond) where T : IProtocolMessage
+        {
+            var delay = new CancellationTokenSource();
+            delay.CancelAfter(millisecond);
+
+            return await ReadAsync(ret, delay.Token);
+        }
+
+        public async Task<T> ReadAsync<T>(CancellationToken token = default) where T : IProtocolMessage, new() => await ReadAsync(new T(), token);
+
+        public async Task<T> ReadAsync<T>(T ret, CancellationToken token = default) where T : IProtocolMessage
         {
             Debug.WriteLine($"Reading protocol message {typeof(T).Name}");
-            var ret = new T();
+            //var ret = new T();
             var required = 0;
             do
             {
@@ -102,16 +111,16 @@ namespace Shadowsocks.Protocol
             } while (true);
         }
 
-
-
         private SequencePosition _lastFrameStart;
         private SequencePosition _lastFrameEnd;
         private ReadOnlyMemory<byte> _lastFrame;
 
         public ReadOnlyMemory<byte> MakeFrame(ReadOnlySequence<byte> seq)
         {
+            // cached frame
             if (_lastFrameStart.Equals(seq.Start) && _lastFrameEnd.Equals(seq.End))
             {
+                Debug.WriteLine("Hit cached frame");
                 return _lastFrame;
             }
 
@@ -120,11 +129,12 @@ namespace Shadowsocks.Protocol
 
             if (seq.IsSingleSegment)
             {
+                Debug.WriteLine("Frame is single segement");
                 _lastFrame = seq.First;
                 return seq.First;
             }
 
-            // TODO: possible DoS
+            Debug.WriteLine("Copy frame data into single Memory");
             Memory<byte> ret = new byte[seq.Length];
             var ptr = 0;
             foreach (var mem in seq)

@@ -5,7 +5,7 @@ namespace Shadowsocks.Protocol
     internal class PipePair
     {
 
-        /**
+        /*
          *  
          *  --> c ---w[  uplink  ]r--> s
          *  <-- c <--r[ downlink ]w--- s
